@@ -1,61 +1,149 @@
-# AgentForge Harness Engineering 技能包
+# AgentForge Harness Skill
 
-> 模型决定上限，Harness 决定底线。
+> **模型决定上限，Harness 决定底线。** Codex CLI / Claude Code 全套技能 + 插件 + 工具链。
 
-18条铁律 + 15个技能 + 8个智能体定义，一键安装。
+29 个 Skills · 2 个 Plugins · CodeGraph 语义索引，一键安装。
 
-## Windows 安装（Win10/11）
+---
 
-```powershell
-# PowerShell 一行命令
-irm https://raw.githubusercontent.com/paskaa/agentforge-harness-skill/master/scripts/install.ps1 | iex
+## 📦 组件清单
 
-# 或者手动
-git clone https://github.com/paskaa/agentforge-harness-skill.git
-.\agentforge-harness-skill\scripts\install.ps1 -GitHub
-```
+### AgentForge 全链路（6 个）
 
-## Linux/Mac 安装
+| 技能 | 说明 | 触发时机 |
+|---|---|---|
+| `bug-analyze` | Bug 根因分析 + 修复方案设计 | 分析 Bug 时 |
+| `bug-fix` | 全链路修复流程（6 环分析） | 修复 Bug 时 |
+| `playwright-test` | Playwright/E2E 回归测试 | 测试修复时 |
+| `acceptance` | 最终验收确认 | 测试通过后 |
+| `chenlin-archive` | 报告生成 + 多层归档 | 验收通过后 |
+| `db-review` | 数据库变更验证 | 涉及 SQL 时 |
+
+### 通用开发（23 个）
+
+| 分类 | 技能 |
+|---|---|
+| **规划** | `writing-plans` · `executing-plans` · `brainstorming` |
+| **测试** | `test-driven-development` · `bug-driven-testing` · `closed-loop-testing` · `verification-before-completion` |
+| **调试** | `systematic-debugging` · `full-chain-fix` |
+| **审查** | `requesting-code-review` · `receiving-code-review` · `review-audit` |
+| **工程** | `harness-engineering` · `constraint-design` · `durable-execution` · `walkinglabs-harness` |
+| **协作** | `dispatching-parallel-agents` · `subagent-driven-development` · `using-superpowers` |
+| **Git** | `using-git-worktrees` · `finishing-a-development-branch` |
+| **元技能** | `writing-skills` · `karpathy-guidelines` |
+
+### Plugins
+
+| 插件 | 说明 |
+|---|---|
+| `harness-engineering` | Harness Engineering 方法论插件（含 6 个子技能） |
+| `understand-anything` | 代码库理解插件（知识图谱 + dashboard + diff 分析） |
+
+### Tools
+
+| 工具 | 说明 |
+|---|---|
+| `codegraph` | 语义代码索引（25% 省钱 · 62% 少调工具） |
+
+### 8 Agent 定义
+
+| Agent | 角色 |
+|---|---|
+| `zhugeliang` | 架构师 — 技术方案 + 代码审查 |
+| `zhaoyun` | 开发者 — 代码实现 |
+| `zhangfei` | 测试官 — 编写测试 + 质量门禁 |
+| `huatuo` | 医生 — Bug 诊断 + 修复 |
+| `guanyu` | 守卫 — 安全审计 + 依赖管理 |
+| `xunyu` | 策略师 — 性能优化 + 架构分析 |
+| `liubei` | 协调者 — Agent 间协调 + 任务分派 |
+| `chenlin` | 记录官 — 文档 + 归档 + 报告 |
+
+---
+
+## 🚀 一键安装
 
 ```bash
-# 一行命令
-CODEX_HOME=~/.codex bash <(curl -s https://raw.githubusercontent.com/paskaa/agentforge-harness-skill/master/scripts/install.sh) --github
-
-# 或者手动
 git clone https://github.com/paskaa/agentforge-harness-skill.git
-bash agentforge-harness-skill/scripts/install.sh --github
+cd agentforge-harness-skill
+bash install.sh
 ```
 
-## 安装内容
+安装脚本会：
+1. 复制 29 个 Skills 到 `~/.codex/skills/`
+2. 安装 2 个 Plugins 到 `~/.codex/plugins/`
+3. 安装 CodeGraph MCP server 到 `~/.codex/config.toml`
 
-| 组件 | 数量 | 说明 |
-|---|---|---|
-| 铁律 | 18条 | `IRON_LAWS.md` — 不可违反 |
-| Bug修复技能 | 6个 | fix/analyze/test/verify/db-review/archive |
-| Harness方法论 | 9个 | harness-engineering/walkinglabs等 |
-| 智能体定义 | 8个 | 刘备~陈琳 |
+---
 
-## 铁律速览
+## 🔧 手动安装
 
-1. Bug状态管理 — 已关闭不处理
-2. 修复流程 — 一次一个Bug
-3. 全链路6环 — 前端→Controller→Service→Mapper→DB→关联
-4. 状态值一致性 — 改状态前检查6个地方
-5. 影响面分析 — rg搜索所有引用
-6. 逆向流程验证 — 退号/取消/停诊都要测
-7. 全链路验证 — 数据库→后端→前端→统计
-8. 池/统计表同步 — 状态变更必须同步统计
-9. 统计变更验证 — 改了统计必须查数据库
-10. 禁止删除源文件
-11. 禁止改方法签名
-12. 搜索代码路径
-13. 数据库铁律 — 先查表结构再写SQL
-14. 测试铁律 — workers=1，超时120秒
-15. 归档铁律 — Git+SQLite+Redis三重写入
-16. 禅道交互 — resolve+activate
-17. 质量门禁 — L1~L5
-18. 禁止硬编码默认值
+```bash
+# Skills
+cp -r skills/* ~/.codex/skills/
 
-## GitHub
+# Plugins
+cp -r plugins/* ~/.codex/plugins/
 
-https://github.com/paskaa/agentforge-harness-skill
+# CodeGraph
+bash tools/codegraph-install.sh
+codegraph install --target codex --yes
+```
+
+---
+
+## 📁 目录结构
+
+```
+agentforge-harness-skill/
+├── skills/                   # 29 个技能
+│   ├── agentforge-*/         # 6 个全链路技能
+│   ├── brainstorming/        # 23 个通用技能
+│   └── ...
+├── plugins/                  # 2 个插件
+│   ├── harness-engineering/
+│   └── understand-anything/
+├── agents/                   # 8 个 Agent 定义
+├── rules/                    # 铁律 + 规则
+├── tools/
+│   └── codegraph-install.sh  # CodeGraph 安装脚本
+├── config/                   # Codex 配置模板
+├── scripts/                  # 安装脚本 (bash + PowerShell)
+├── install.sh                # 一键安装
+└── README.md
+```
+
+---
+
+## 🎯 使用场景
+
+### AgentForge Bug 修复流水线
+
+```
+收到 Bug → bug-analyze → bug-fix → playwright-test → acceptance → chenlin-archive
+```
+
+### 日常开发
+
+```
+brainstorming → writing-plans → test-driven-development → code-review → verification
+```
+
+### 大规模重构
+
+```
+dispatching-parallel-agents → subagent-driven-development → full-chain-fix → review-audit
+```
+
+---
+
+## 📋 环境要求
+
+- **Codex CLI** 或 **Claude Code**
+- **Node.js** (用于 CodeGraph)
+- **Bash** (用于安装脚本)
+
+---
+
+## 📜 License
+
+MIT
