@@ -1,0 +1,5 @@
+# ── Prefix Rules ──
+prefix_rule(pattern=["/bin/bash", "-lc", "cd /root/ft_userdata && .venv/bin/freqtrade show-config --config user_data/config_backtest_futures_gpt4o.json 2>&1 | grep -A 50 '\"freqai\"'"], decision="allow")
+prefix_rule(pattern=["/bin/bash", "-lc", "cd /root/ft_userdata && .venv/bin/freqtrade show-config --config user_data/config_backtest_futures_gpt4o.json 2>&1 | tail -80"], decision="allow")
+prefix_rule(pattern=["/bin/bash", "-lc", "cd /root/ft_userdata && .venv/bin/freqtrade backtesting --config user_data/config_backtest_4046.json --strategy Alvinchen_v4046 --timerange 20250501-20250526 2>&1"], decision="allow")
+prefix_rule(pattern=["/bin/bash", "-lc", "curl -s --max-time 15 https://api.bybit.com/v5/market/instruments-info?category=spot 2>&1 | head -3"], decision="allow")
