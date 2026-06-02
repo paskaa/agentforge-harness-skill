@@ -219,3 +219,47 @@ rg "状态枚举名|相关方法名|相关字段名" --type java --type vue
 | Bug | 教训 | 根因 |
 |---|---|---|
 | #617 | 费用性质硬编码为 '0000'（自费），用户选医保无效 | 构建参数时写死默认值 |
+
+---
+
+## 十九、前端验证铁律
+
+- **提交前必须编译前端** — `npm run build` 或 `npx vite build` 通过才算完成
+- **禁止只改 .vue 文件不验证编译** — 改完必须跑一次编译确认无报错
+- **SCSS 括号闭合必须检查** — `<style lang="scss" scoped>` 内的所有 `{}` 必须成对闭合
+- **SCSS 嵌套层级不超过 4 层** — 过深嵌套说明结构需要重构
+- **编译报错必须当场修复** — 看到 error 立即修，不要留到下一步
+
+### SCSS 检查清单
+
+```bash
+# 编译验证
+cd openhis-ui-vue3 && npm run build
+
+# 如果编译报错，检查 SCSS
+grep -n "{" src/views/xxx/index.vue | wc -l  # 开括号数
+grep -n "}" src/views/xxx/index.vue | wc -l  # 闭括号数
+# 两者必须相等
+```
+
+---
+
+## 二十、提交前验证铁律
+
+- **后端**: `mvn compile` 通过 + 无新增 warning
+- **前端**: `npm run build` 通过 + 无 SCSS 错误
+- **禁止跳过编译直接提交** — 编译失败的代码不允许进仓库
+- **提交信息格式**: `type(scope): description`（如 `fix(charge): 修复退费金额计算`）
+
+### 提交前检查流程
+
+```bash
+# 1. 后端编译
+cd openhis-server-new && mvn compile -pl openhis-application -am
+
+# 2. 前端编译
+cd openhis-ui-vue3 && npm run build
+
+# 3. 两个都通过才提交
+git add --all && git commit -m "type(scope): description"
+```
