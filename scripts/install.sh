@@ -1,69 +1,60 @@
 #!/bin/bash
 # AgentForge Harness Engineering 一键安装脚本
-# 用法: bash install.sh [目标目录]
+# 用法:
+#   本地安装: bash install.sh
+#   GitHub安装: bash install.sh --github
 
 set -e
 
-# 默认安装到 ~/.codex
-CODEX_HOME="${1:-$HOME/.codex}"
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+REPO="paskaa/agentforge-harness-skill"
 
 echo "🔧 AgentForge Harness Engineering 安装器"
 echo "========================================="
+
+# 判断安装来源
+if [ "$1" = "--github" ]; then
+    echo "📥 从 GitHub 下载..."
+    TMPDIR=$(mktemp -d)
+    curl -sL "https://github.com/$REPO/archive/refs/heads/master.tar.gz" | tar xz -C "$TMPDIR"
+    SCRIPT_DIR="$TMPDIR/agentforge-harness-skill-master"
+else
+    echo "📁 从本地安装..."
+    SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+
 echo "安装目录: $CODEX_HOME"
-echo "源文件:   $SCRIPT_DIR"
 echo ""
 
 # 1. 创建目录
-echo "📁 创建目录..."
-mkdir -p "$CODEX_HOME/rules"
-mkdir -p "$CODEX_HOME/skills"
+mkdir -p "$CODEX_HOME/rules" "$CODEX_HOME/skills"
 
 # 2. 安装铁律
-echo "📋 安装铁律 (IRON_LAWS.md)..."
+echo "📋 安装铁律..."
 cp "$SCRIPT_DIR/rules/IRON_LAWS.md" "$CODEX_HOME/rules/"
-echo "   ✅ $CODEX_HOME/rules/IRON_LAWS.md"
+echo "   ✅ IRON_LAWS.md"
 
 # 3. 安装技能
 echo "📦 安装技能..."
 for skill_dir in "$SCRIPT_DIR"/skills/*/; do
     skill_name=$(basename "$skill_dir")
-    if [ -d "$skill_dir" ]; then
-        cp -r "$skill_dir" "$CODEX_HOME/skills/"
-        echo "   ✅ $skill_name"
-    fi
+    cp -r "$skill_dir" "$CODEX_HOME/skills/"
+    echo "   ✅ $skill_name"
 done
 
-# 4. 验证安装
+# 4. 验证
 echo ""
-echo "🔍 验证安装..."
 errors=0
-
-if [ -f "$CODEX_HOME/rules/IRON_LAWS.md" ]; then
-    lines=$(wc -l < "$CODEX_HOME/rules/IRON_LAWS.md")
-    echo "   ✅ IRON_LAWS.md ($lines 行)"
-else
-    echo "   ❌ IRON_LAWS.md 缺失"
-    errors=$((errors+1))
-fi
-
-for skill in agentforge-fix agentforge-analyze agentforge-test agentforge-verify agentforge-db-review agentforge-archive; do
-    if [ -f "$CODEX_HOME/skills/$skill/SKILL.md" ]; then
-        echo "   ✅ $skill"
-    else
-        echo "   ❌ $skill 缺失"
-        errors=$((errors+1))
-    fi
+for f in "$CODEX_HOME/rules/IRON_LAWS.md" "$CODEX_HOME/skills/agentforge-fix/SKILL.md"; do
+    if [ -f "$f" ]; then echo "   ✅ $(basename $f)"; else echo "   ❌ $(basename $f) 缺失"; errors=$((errors+1)); fi
 done
+
+# 清理
+[ "$1" = "--github" ] && rm -rf "$TMPDIR"
 
 echo ""
 if [ $errors -eq 0 ]; then
-    echo "🎉 安装完成！所有组件已就位。"
-    echo ""
-    echo "使用方法："
-    echo "  - 在 Codex 中执行任务时，铁律会自动加载"
-    echo "  - 修复Bug时会自动激活 agentforge-fix 技能"
-    echo "  - 查看铁律: cat $CODEX_HOME/rules/IRON_LAWS.md"
+    echo "🎉 安装完成！铁律会在 Codex 执行任务时自动加载。"
 else
-    echo "⚠️  安装完成，但有 $errors 个组件缺失。"
+    echo "⚠️  安装完成，但有 $errors 个问题。"
 fi
