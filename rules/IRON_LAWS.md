@@ -263,3 +263,51 @@ cd openhis-ui-vue3 && npm run build
 # 3. 两个都通过才提交
 git add --all && git commit -m "type(scope): description"
 ```
+
+---
+
+## 二十一、Codex Verdict 解析容错（来自 v0.5.0 修复）
+
+- `parse_verdict` 必须支持启发式容错 — codex 可能不输出 VERDICT 标记
+- 无 VERDICT 时用关键词判断：修复/编译通过 → PASS；error/panic → FAIL
+- **禁止**把 Unknown 直接当失败 — 必须检查实际 git diff + 编译结果
+- 验证方式：检查 worktree 中是否有文件变更 + 编译是否通过
+
+---
+
+## 二十二、fix_active 锁管理（来自 v0.5.0 修复）
+
+- `fix_active` TTL 不超过 30 分钟（防止永久阻塞）
+- 修复完成/失败后必须删除 `fix_active` 标记
+- 加入 failed_set 时同步清理 `fix_active`
+- **禁止**：锁不释放导致 Bug 永久卡死
+- 验证方式：检查 Redis 中 `fix_active:*` 键数量，不应超过 agent 数量
+
+---
+
+## 二十三、面板数据准确性（来自 v0.5.0 修复）
+
+- Dashboard agent 统计必须归一化中英文 agent_id（"关羽"="guanyu"）
+- 只统计 `fix_done` 事件（不混入 test/verify/pm_routed）
+- zentao cache 必须自动刷新（空/过期时立即拉取 + 后台定时刷新）
+- **禁止**：面板显示虚假数据误导决策
+- 验证方式：对比面板数据与 SQLite traces 实际数据
+
+---
+
+## 二十四、L5 自优化分数计算（来自 v0.5.0 修复）
+
+- 分数必须直接从 analytics 覆盖（不用 EMA 累积偏差）
+- 只统计 `fix_done` 事件的成功率（不混入 fix_start）
+- **禁止**：EMA 从 0 开始累积导致分数永远偏低
+- 验证方式：检查 `agent_scores.json` 中 success_rate 是否与 analytics 一致
+
+---
+
+## 二十五、部署验证（来自 v0.5.0 修复）
+
+- `parse_timestamp` 必须支持 CST/+0800 时区格式
+- 部署状态判定：后端启动时间 >= 最新 commit 时间
+- binary 替换前必须停止所有服务
+- **禁止**：旧 binary 运行导致新代码不生效
+- 验证方式：`curl /api/deploy-status` 返回 `deployed: true`
