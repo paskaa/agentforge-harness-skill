@@ -273,3 +273,105 @@ git add --all && git commit -m "type(scope): description"
 - `comment_bug` 用 resolve+activate workaround，activate 失败会导致 bug 卡在 resolved
 - `ok_to_commit` 必须要求 `has_fix_commit = true`（develop 上有实际 commit）
 - **验证方式**: `git log origin/develop --grep="Bug#{id}" --oneline -1` 有输出才允许 resolve
+
+---
+
+## 二十七、comment_bug 禁止改状态铁律（来自 v0.5.2 修复）
+
+- **禁止**使用 resolve+activate workaround 添加备注 — activate 失败会导致 bug 卡在 resolved
+- 添加备注必须使用不改状态的方式：CLI `zentao bug update --comment` 或 API `PUT /bugs/{id}`
+- `comment_bug` 函数必须只写 comment，不触发任何状态变更
+- **教训**: 36 个 bug 因 activate 失败被误标为 resolved，无代码提交
+
+### 正确做法
+
+```rust
+// ✅ 正确：只加备注，不改状态
+zentao bug update --id <BUG_ID> --comment "备注内容"
+
+// ❌ 错误：resolve+activate 会改状态
+POST /bugs/{id}/resolve  // 改为 resolved
+POST /bugs/{id}/activate  // 如果失败，bug 卡在 resolved
+```
+
+---
+
+## 二十八、文件快照禁用覆盖判定铁律（来自 v0.5.2 修复）
+
+- **禁止**用主仓库文件快照 diff 覆盖 success 判定
+- success 判定必须基于 agent worktree 的实际变更（`count_changed_files` + `has_fix_commit`）
+- 主仓库快照仅用于日志记录，不能影响判定结果
+- **教训**: 主仓库快照检测到其他 agent 的变更，误判当前 agent 修复成功
+
+### 根因
+
+```
+Agent A cherry-pick 到 develop → 主仓库有变更
+Agent B 运行 → 主仓库快照检测到 A 的变更 → 误判 B 修复成功
+```
+
+### 正确做法
+
+```rust
+// ✅ 正确：基于 worktree 判定
+let changes = count_worktree_changes(agent_name);  // 检查 worktree
+let has_fix = has_recent_fix_commit(agent_name, bug_id);  // 检查 develop commit
+
+// ❌ 错误：基于主仓库判定
+let file_diff = snapshot_and_diff(main_repo_dir, &before);  // 检查主仓库
+if has_real_changes { r.success = true; }  // 误判
+```
+
+---
+
+## 二十九、Worktree 必须存在且为 Git 仓库铁律
+
+- 每个 agent 的 worktree 目录必须存在且包含 `.git` 文件
+- 启动 executor 前必须验证 worktree 存在：`test -d /tmp/agentforge-worktrees/{agent}`
+- worktree 不存在时必须创建：`git worktree add /tmp/agentforge-worktrees/{agent} -b {agent}`
+- **教训**: 4 个 agent（zhangfei, chenlin, huatuo, liubei）无 worktree，codex 运行失败但仍标记成功
+
+### 验证命令
+
+```bash
+# 检查所有 agent worktree
+for agent in zhaoyun guanyu xunyu zhangfei huatuo chenlin zhugeliang liubei; do
+  if [ -d "/tmp/agentforge-worktrees/$agent/.git" ]; then
+    echo "✅ $agent: worktree OK"
+  else
+    echo "❌ $agent: worktree MISSING"
+    cd /root/.openclaw/workspace/his-repo
+    git worktree add /tmp/agentforge-worktrees/$agent -b $agent
+  fi
+done
+```
+
+---
+
+## 三十、Bug 状态变更必须双重确认铁律
+
+- resolve Bug 前必须检查当前状态：`zentao bug get --id {id} | grep status`
+- 只有 `status: active` 的 Bug 才允许 resolve
+- resolve 后必须验证状态：`zentao bug get --id {id} | grep status` 确认为 `resolved`
+- activate 后必须验证状态：确认恢复为 `active`
+- **教训**: 批量操作 36 个 bug 时，1 个因状态不对失败，需要逐个检查
+
+### 批量操作模板
+
+```bash
+source /root/.config/zentao/.env
+for id in 711 710 709; do
+  # 1. 检查当前状态
+  status=$(zentao bug get --id "$id" 2>&1 | grep "status:" | awk '{print $2}')
+  if [ "$status" != "active" ]; then
+    echo "⚠️ Bug #$id: 当前状态=$status，跳过"
+    continue
+  fi
+  # 2. 执行操作
+  zentao bug activate --id "$id" --data '{"openedBuild":"6"}'
+  # 3. 验证结果
+  new_status=$(zentao bug get --id "$id" 2>&1 | grep "status:" | awk '{print $2}')
+  echo "Bug #$id: $status → $new_status"
+done
+```
+
