@@ -385,3 +385,14 @@ done
 - **代码路径**：`run_harness_loop` 的自动提交逻辑必须包含禅道备注调用
 - **验证方式**：`zentao bug get --id {id}` 检查最新备注是否存在
 - **教训**: v0.6.0 发现 `run_harness_loop` 路径缺少禅道备注调用，导致多个 Bug 只有 commit 没有备注
+
+## 三十二、DTO 字段类型防御铁律（来自 Bug #632）
+
+- **前端传入的 Boolean 字段 → 改用 String + 业务层转换**
+  - Jackson 对 Boolean 严格校验，只接受 `true/false`，非标输入直接崩
+  - 前端数据来源多（搜索、分类、详情回填），结构不一致是常态
+- **所有接受前端输入的 DTO 加 `@JsonIgnoreProperties(ignoreUnknown = true)`**
+  - 防止前端额外字段导致反序列化失败
+- **Integer/Long 字段同理** — 前端可能传空字符串，DTO 用 String 接更安全
+- **调试反序列化错误第一步**：直接搜 DTO 里的目标类型字段（如 Boolean），不用逐行读代码
+- **教训**: Bug #632 因 `isPackage: Boolean` 接收到项目名称 "肝功能12项" 崩溃，排查耗时 30min+
