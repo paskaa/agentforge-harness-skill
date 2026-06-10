@@ -169,11 +169,16 @@ rg "状态枚举名|相关方法名|相关字段名" --type java --type vue
 
 ---
 
-## 十六、禅道交互
+## 十六、禅道交互（铁律 — 不可违反）
 
-- 备注使用 resolve+activate workaround
-- 不直接调用 comment API（会 404）
-- 图片附件必须 OCR 读取
+- **备注必须使用 resolve+activate workaround**
+  - `zentao bug update --comment` ❌ 不会创建 comment action
+  - `zentao bug update --data '{"comment":"..."}'` ❌ 同样无效
+  - ✅ 正确方法：`zentao bug resolve --id <id> --data '{"resolution":"fixed","resolvedBuild":"trunk","comment":"..."}'`
+  - ✅ 然后激活：`zentao bug activate --id <id> --data '{"openedBuild":"trunk"}'`
+- **不直接调用 comment API（会 404）**
+- **图片附件必须 OCR 读取**
+- **每个 Bug 修复必须同时写禅道备注 — 代码提交和备注是原子操作，缺一不可**
 
 ---
 
@@ -376,15 +381,18 @@ done
 ```
 
 
-## 三十一、修复后必须写禅道备注铁律（来自 v0.6.0 修复）
+## 三十一、修复后必须写禅道备注铁律（来自 v0.6.0 修复）— 不可违反
 
 - **每个 Bug 修复（commit + cherry-pick 到 develop）后，必须立即写禅道备注**
-- 禁止只提交代码不写备注 — 代码提交和禅道备注是原子操作，缺一不可
+- **禁止只提交代码不写备注 — 代码提交和禅道备注是原子操作，缺一不可**
+- **正确方法（铁律 #16）**：
+  - `zentao bug resolve --id <id> --data '{"resolution":"fixed","resolvedBuild":"trunk","comment":"..."}'`
+  - `zentao bug activate --id <id> --data '{"openedBuild":"trunk"}'`
 - 成功修复：调用 `resolve_bug_in_zentao` 写结构化备注（根因 + 变更文件 + 验证结果）
 - 修复失败：调用 `comment_in_zentao` 写失败原因备注
 - **代码路径**：`run_harness_loop` 的自动提交逻辑必须包含禅道备注调用
-- **验证方式**：`zentao bug get --id {id}` 检查最新备注是否存在
-- **教训**: v0.6.0 发现 `run_harness_loop` 路径缺少禅道备注调用，导致多个 Bug 只有 commit 没有备注
+- **验证方式**：`curl /api.php/v1/bugs/{id}` 检查 `actions` 字段是否有新 comment
+- **教训**: v0.6.0 发现 `run_harness_loop` 路径缺少禅道备注调用；v0.6.1 发现 `zentao bug update --comment` 不创建 comment action，必须用 resolve+activate
 
 ## 三十二、DTO 字段类型防御铁律（来自 Bug #632）
 
