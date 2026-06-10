@@ -1,0 +1,387 @@
+# 🔴 AgentForge 铁律（不可违反）
+
+> 所有智能体在处理任何任务时必须遵守。违反任何一条 = 阻断提交。
+> 唯一源头文件：修改此文件后所有智能体自动生效。
+
+---
+
+## 一、Bug 状态管理
+
+- **已关闭/已解决的 Bug 禁止处理** — 处理前检查禅道 status，resolved/closed 直接跳过
+- **人类提的 Bug 只加备注不改状态** — reporter 是人类账号时，不改 status、不改 assignedTo
+- **智能体提的 Bug 可改分配和加备注** — 状态变更等测试通过后由华佗确认
+- **每个修复必须有 git commit** — 格式: `fix(#bug_id): 简要描述`
+- **🔴 修复完成必须提交** — `git add --all && git commit && git push`，未提交=没修
+- **🔴 修复必须合并到 develop** — 工作树 commit ≠ 生效，必须 cherry-pick/merge 到 develop
+- **🔴 未合并到 develop 的修复等于没修** — 验收时检查 develop 上是否有该 commit
+- **🔴 修复必须编译部署后才算完成** — `mvn package` → `systemctl restart` → 验证启动时间
+
+---
+
+## 二、修复流程
+
+- **一次只修一个 Bug**，不扩大范围
+- **修前必须完整获取 Bug 全部信息** — 描述、复现步骤、所有截图/附件、所有备注历史。禁止只看标题就写代码
+- **修复前必须读 AGENTS.md**
+- **修复后必须验证编译** — `mvn compile` / `vue-tsc --noEmit` 0 error
+- **commit 前必须验证** — 编译通过 + 无新增 lint 警告
+
+---
+
+## 三、全链路 6 环分析
+
+涉及数据库字段的 Bug 必须走完整链路：
+```
+前端/页面 → Controller → Service → Mapper → DB/SQL → 关联模块
+ ①录入      ②验证      ③业务     ④持久化    ⑤存储     ⑥联动
+```
+
+---
+
+## 四、状态值一致性（来自 Bug #574 教训）
+
+修改任何状态值前，**必须**列出完整链路并逐项检查：
+1. 枚举定义（如 `SlotStatus`）的值
+2. Service 层设置的状态值是否与枚举一致
+3. 查询/列表接口的状态映射是否覆盖所有枚举值
+4. 前端 `STATUS_CLASS_MAP` 是否包含新状态
+5. 前端过滤条件（`v-if`、`v-for`）是否兼容新状态
+6. 池/统计表的聚合 SQL 是否包含新状态值
+
+**禁止**：只改一端不检查其他端。
+
+---
+
+## 五、状态变更影响面分析（来自 Bug #574→575 教训）
+
+改任何状态枚举值前，**必须**执行影响面分析：
+1. `rg "原状态枚举名" --type java` 列出所有引用文件
+2. 逐个检查：设置值？查询过滤？显示映射？统计聚合？
+3. 检查逆向流程：退号、取消、停诊是否兼容新状态
+4. 检查 XML mapper 中所有查询过滤条件
+5. 检查前端所有 v-if/v-for/disabled 条件
+
+**禁止**：只改正向流程不验逆向流程。
+
+---
+
+## 六、逆向流程验证（来自 Bug #575 教训）
+
+涉及状态流转的 Bug，验证时**必须**覆盖：
+- 正向：预约→签到→就诊→完成
+- 逆向：退号、取消预约、停诊、退费
+- 边界：并发操作、重复操作、异常中断
+
+**禁止**：只测正向流程就标记"修复完成"。
+
+---
+
+## 七、全链路验证（状态流转 Bug 必做）
+
+修复后按以下顺序验证，**编译通过不等于修复完成**：
+```
+① 数据库：SELECT status FROM table WHERE id = ?  → 确认写入正确
+② 后端接口：检查所有 if/switch 分支  → 确认映射正确
+③ 前端显示：检查 STATUS_CLASS_MAP  → 确认文本正确
+④ 前端交互：检查 v-if/v-for/disabled  → 确认按钮状态正确
+⑤ 统计数据：检查聚合 SQL  → 确认统计包含新状态
+```
+
+---
+
+## 八、池/统计表同步（来自 Bug #574 反复修复教训）
+
+- **任何状态变更必须同步更新关联统计表**
+- 检查清单：
+  1. 状态变更后，哪些统计字段需要更新？
+  2. 是原子递增/递减，还是全量重算？
+  3. 并发安全：用 `SET field = field + 1` 还是先查后改？
+  4. 逆向操作（退号/取消）是否正确回滚统计？
+- **禁止**：只改状态不改统计，或只改统计不改状态
+
+---
+
+## 九、统计变更必须验证实际值（来自 Bug #575 教训）
+
+- 修改统计逻辑后，**必须查数据库验证实际值**
+- `SELECT booked_num, locked_num FROM adm_schedule_pool WHERE id = ?`
+- 对比操作前后的值，确认统计正确
+- **禁止**：改了统计逻辑不查数据库验证
+
+---
+
+## 十、禁止删除源文件
+
+- **绝对禁止**删除项目中已有的 Java/Vue/SQL 源文件
+- 编译错误 → 修复错误，不删除文件
+- 重复文件 → 重构合并，不删除文件
+- AI 幻觉文件 → 检查 `git ls-tree baseline -- <file>` 确认后再删除
+- **唯一例外**：人类明确确认删除
+
+---
+
+## 十一、禁止修改已有公开方法签名
+
+- 不能删除或重命名已有的 public 方法
+- 不能修改已有方法的参数列表
+- 需要新功能 → 添加重载方法
+- 需要改行为 → 修改方法内部实现
+
+---
+
+## 十二、搜索所有相关代码路径
+
+修复前必须用 `rg` 搜索：
+```
+rg "状态枚举名|相关方法名|相关字段名" --type java --type vue
+```
+确保不遗漏任何引用路径。
+
+---
+
+## 十三、数据库铁律
+
+- **修前必须查询真实数据库** — 确认表结构、字段约束、索引
+- **禁止凭猜测写 SQL** — 先 `\d table_name` 查看表结构
+- **修改 SQL 后必须验证** — `EXPLAIN` 或实际查询验证语法
+- **NOT NULL 约束必须检查** — INSERT/UPDATE 前先查 `is_nullable`
+- **关联表必须查完整** — 涉及 JOIN 查所有关联表结构和外键
+- **涉及 SQL 必须先查真实数据库**
+
+---
+
+## 十四、测试铁律
+
+- Playwright 必须 `--workers=1`
+- 超时 120 秒，最多重试 3 次
+- 测试失败自动重试，超过 3 次通知人工介入
+- 测试结果写入禅道备注
+- **DB审查失败自动回退** — 路由回原修复智能体
+
+---
+
+## 十五、归档铁律
+
+- **三重写入** — Git + SQLite + Redis
+- SQLite 必须使用完整字段
+- 禅道备注格式：`[📝 陈琳归档] Bug #xxx`
+- 归档报告必须包含：基本信息 + 根因分析 + 修复文件 + 流程时间线
+
+---
+
+## 十六、禅道交互
+
+- 备注使用 resolve+activate workaround
+- 不直接调用 comment API（会 404）
+- 图片附件必须 OCR 读取
+
+---
+
+## 十七、质量门禁
+
+- L1: 编译通过
+- L2: 测试通过
+- L3: DB审查通过
+- L4: 验收通过
+- L5: 归档完成
+
+---
+
+## 过往教训
+
+| Bug | 教训 | 根因 |
+|---|---|---|
+| #574 | 状态值 BOOKED(1)→应为 CHECKED_IN(3)，前端映射缺失 | 没走完整状态链路 |
+| #574 | AI 看到编译错误直接删文件 | 没检查 git baseline |
+| #574 | 多次 fallback 修错文件（OrderServiceImpl） | 没用 rg 搜索所有引用 |
+| #574 | 签到后 booked_num 未累加 | 只改状态没改统计 |
+| #575 | 改了签到状态没检查退号流程 | 只验正向不验逆向 |
+| #575 | booked_num 应在预约时累加而非签到时 | 统计变更未验证实际值 |
+| — | 修复完成未提交到 develop | 框架未强制验证提交 |
+| — | 退号流程只检查 BOOKED(1) 不兼容 CHECKED_IN(3) | 状态变更影响面分析缺失 |
+
+---
+
+## 十八、禁止硬编码业务默认值（来自 Bug #617 教训）
+
+- **禁止**在提交参数中硬编码业务默认值（如 `contractNo: '0000'`）
+- 必须使用用户在表单中选择的值，硬编码值仅作为 fallback
+- 检查清单：
+  1. 表单字段是否有 `v-model` 绑定？
+  2. 构建提交参数时是否使用了绑定值？
+  3. 提交后是否覆盖了用户选择？
+- **禁止**：用户选了医保，提交时却写死为自费
+
+---
+
+## 过往教训（补充）
+
+| Bug | 教训 | 根因 |
+|---|---|---|
+| #617 | 费用性质硬编码为 '0000'（自费），用户选医保无效 | 构建参数时写死默认值 |
+
+---
+
+## 十九、前端验证铁律
+
+- **提交前必须编译前端** — `npm run build` 或 `npx vite build` 通过才算完成
+- **禁止只改 .vue 文件不验证编译** — 改完必须跑一次编译确认无报错
+- **SCSS 括号闭合必须检查** — `<style lang="scss" scoped>` 内的所有 `{}` 必须成对闭合
+- **SCSS 嵌套层级不超过 4 层** — 过深嵌套说明结构需要重构
+- **编译报错必须当场修复** — 看到 error 立即修，不要留到下一步
+
+### SCSS 检查清单
+
+```bash
+# 编译验证
+cd openhis-ui-vue3 && npm run build
+
+# 如果编译报错，检查 SCSS
+grep -n "{" src/views/xxx/index.vue | wc -l  # 开括号数
+grep -n "}" src/views/xxx/index.vue | wc -l  # 闭括号数
+# 两者必须相等
+```
+
+---
+
+## 二十、提交前验证铁律
+
+- **后端**: `mvn compile` 通过 + 无新增 warning
+- **前端**: `npm run build` 通过 + 无 SCSS 错误
+- **禁止跳过编译直接提交** — 编译失败的代码不允许进仓库
+- **提交信息格式**: `type(scope): description`（如 `fix(charge): 修复退费金额计算`）
+
+### 提交前检查流程
+
+```bash
+# 1. 后端编译
+cd openhis-server-new && mvn compile -pl openhis-application -am
+
+# 2. 前端编译
+cd openhis-ui-vue3 && npm run build
+
+# 3. 两个都通过才提交
+git add --all && git commit -m "type(scope): description"
+```
+
+---
+
+## 二十六、resolve 前必须验证 develop commit（来自 v0.5.1 修复）
+
+- **禁止**仅凭 worktree 未提交变更就 resolve Bug
+- resolve 前必须检查 `git log origin/develop --grep="Bug#{id}"` 是否有 commit
+- `comment_bug` 用 resolve+activate workaround，activate 失败会导致 bug 卡在 resolved
+- `ok_to_commit` 必须要求 `has_fix_commit = true`（develop 上有实际 commit）
+- **验证方式**: `git log origin/develop --grep="Bug#{id}" --oneline -1` 有输出才允许 resolve
+
+---
+
+## 二十七、comment_bug 禁止改状态铁律（来自 v0.5.2 修复）
+
+- **禁止**使用 resolve+activate workaround 添加备注 — activate 失败会导致 bug 卡在 resolved
+- 添加备注必须使用不改状态的方式：CLI `zentao bug update --comment` 或 API `PUT /bugs/{id}`
+- `comment_bug` 函数必须只写 comment，不触发任何状态变更
+- **教训**: 36 个 bug 因 activate 失败被误标为 resolved，无代码提交
+
+### 正确做法
+
+```rust
+// ✅ 正确：只加备注，不改状态
+zentao bug update --id <BUG_ID> --comment "备注内容"
+
+// ❌ 错误：resolve+activate 会改状态
+POST /bugs/{id}/resolve  // 改为 resolved
+POST /bugs/{id}/activate  // 如果失败，bug 卡在 resolved
+```
+
+---
+
+## 二十八、文件快照禁用覆盖判定铁律（来自 v0.5.2 修复）
+
+- **禁止**用主仓库文件快照 diff 覆盖 success 判定
+- success 判定必须基于 agent worktree 的实际变更（`count_changed_files` + `has_fix_commit`）
+- 主仓库快照仅用于日志记录，不能影响判定结果
+- **教训**: 主仓库快照检测到其他 agent 的变更，误判当前 agent 修复成功
+
+### 根因
+
+```
+Agent A cherry-pick 到 develop → 主仓库有变更
+Agent B 运行 → 主仓库快照检测到 A 的变更 → 误判 B 修复成功
+```
+
+### 正确做法
+
+```rust
+// ✅ 正确：基于 worktree 判定
+let changes = count_worktree_changes(agent_name);  // 检查 worktree
+let has_fix = has_recent_fix_commit(agent_name, bug_id);  // 检查 develop commit
+
+// ❌ 错误：基于主仓库判定
+let file_diff = snapshot_and_diff(main_repo_dir, &before);  // 检查主仓库
+if has_real_changes { r.success = true; }  // 误判
+```
+
+---
+
+## 二十九、Worktree 必须存在且为 Git 仓库铁律
+
+- 每个 agent 的 worktree 目录必须存在且包含 `.git` 文件
+- 启动 executor 前必须验证 worktree 存在：`test -d /tmp/agentforge-worktrees/{agent}`
+- worktree 不存在时必须创建：`git worktree add /tmp/agentforge-worktrees/{agent} -b {agent}`
+- **教训**: 4 个 agent（zhangfei, chenlin, huatuo, liubei）无 worktree，codex 运行失败但仍标记成功
+
+### 验证命令
+
+```bash
+# 检查所有 agent worktree
+for agent in zhaoyun guanyu xunyu zhangfei huatuo chenlin zhugeliang liubei; do
+  if [ -d "/tmp/agentforge-worktrees/$agent/.git" ]; then
+    echo "✅ $agent: worktree OK"
+  else
+    echo "❌ $agent: worktree MISSING"
+    cd /root/.openclaw/workspace/his-repo
+    git worktree add /tmp/agentforge-worktrees/$agent -b $agent
+  fi
+done
+```
+
+---
+
+## 三十、Bug 状态变更必须双重确认铁律
+
+- resolve Bug 前必须检查当前状态：`zentao bug get --id {id} | grep status`
+- 只有 `status: active` 的 Bug 才允许 resolve
+- resolve 后必须验证状态：`zentao bug get --id {id} | grep status` 确认为 `resolved`
+- activate 后必须验证状态：确认恢复为 `active`
+- **教训**: 批量操作 36 个 bug 时，1 个因状态不对失败，需要逐个检查
+
+### 批量操作模板
+
+```bash
+source /root/.config/zentao/.env
+for id in 711 710 709; do
+  # 1. 检查当前状态
+  status=$(zentao bug get --id "$id" 2>&1 | grep "status:" | awk '{print $2}')
+  if [ "$status" != "active" ]; then
+    echo "⚠️ Bug #$id: 当前状态=$status，跳过"
+    continue
+  fi
+  # 2. 执行操作
+  zentao bug activate --id "$id" --data '{"openedBuild":"6"}'
+  # 3. 验证结果
+  new_status=$(zentao bug get --id "$id" 2>&1 | grep "status:" | awk '{print $2}')
+  echo "Bug #$id: $status → $new_status"
+done
+```
+
+
+## 三十一、修复后必须写禅道备注铁律（来自 v0.6.0 修复）
+
+- **每个 Bug 修复（commit + cherry-pick 到 develop）后，必须立即写禅道备注**
+- 禁止只提交代码不写备注 — 代码提交和禅道备注是原子操作，缺一不可
+- 成功修复：调用 `resolve_bug_in_zentao` 写结构化备注（根因 + 变更文件 + 验证结果）
+- 修复失败：调用 `comment_in_zentao` 写失败原因备注
+- **代码路径**：`run_harness_loop` 的自动提交逻辑必须包含禅道备注调用
+- **验证方式**：`zentao bug get --id {id}` 检查最新备注是否存在
+- **教训**: v0.6.0 发现 `run_harness_loop` 路径缺少禅道备注调用，导致多个 Bug 只有 commit 没有备注
