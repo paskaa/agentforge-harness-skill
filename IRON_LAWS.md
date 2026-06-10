@@ -404,3 +404,144 @@ done
 - **Integer/Long 字段同理** — 前端可能传空字符串，DTO 用 String 接更安全
 - **调试反序列化错误第一步**：直接搜 DTO 里的目标类型字段（如 Boolean），不用逐行读代码
 - **教训**: Bug #632 因 `isPackage: Boolean` 接收到项目名称 "肝功能12项" 崩溃，排查耗时 30min+
+
+## 三十三、Codex Exec 停滞检测铁律（来自 v0.7.0 测试）
+
+- **codex exec 必须有停滞检测机制** — 进程无输出超过 10 分钟必须杀掉
+- **检测范围必须包含 stdout 和 stderr** — codex reasoning 阶段只写 stderr 不写 stdout
+- **停滞判定基于最后活动时间**（stdout 或 stderr 最后写入时间），不是进程存活时间
+- **停滞杀掉后必须自动重试**（最多 3 次），因为 stall 通常是暂时性问题
+- **教训**: v0.7.0 测试中 codex exec 无输出跑 16 分钟才发现，浪费资源
+
+### 正确实现
+
+```rust
+// ✅ 正确：stdout + stderr 都追踪活动
+let last_activity = Arc::new(Mutex::new(Instant::now()));
+// stdout 线程：写入时更新 last_activity
+// stderr 线程：写入时也更新 last_activity
+// 主循环：检查 last_activity.elapsed() > stall_timeout
+
+// ❌ 错误：只追踪 stdout
+// reasoning 阶段只有 stderr 输出，会被误判为 stall
+```
+
+---
+
+## 三十四、远程插件同步禁用铁律（来自 v0.7.0 测试）
+
+- **codex exec 启动时必须禁用远程插件同步**
+- **根因**：`codex_core_plugins::remote::remote_installed_plugin_sync` 尝试连接 `chatgpt.com` 认证，API key 模式下认证失败后 hang 住
+- **解决方案**：
+  1. 移除或修复 `~/.agents/plugins/marketplace.json`（格式必须是 JSON 数组）
+  2. 设置环境变量 `CODEX_DISABLE_REMOTE_SYNC=1`
+- **验证**：启动日志不应出现 `remote installed plugin bundle sync failed`
+- **教训**: v0.7.0 测试中 3 次 stall 重试全部卡在插件同步，每次 10 分钟
+
+---
+
+## 三十五、Vision API 超时配置铁律（来自 v0.7.0 测试）
+
+- **多图 Vision 请求必须设置 120 秒以上超时**
+- **单图 Vision 请求至少 30 秒**
+- **Vision 客户端必须与普通 LLM 客户端分开**（不同超时配置）
+- **Vision 失败必须回退到纯文本分析**，不能阻断修复流程
+- **教训**: v0.7.0 测试中 3 张图 vision 请求 30 秒超时失败
+
+### 正确实现
+
+```rust
+// ✅ 正确：Vision 用独立客户端，120 秒超时
+let vision_client = Client::builder()
+    .timeout(Duration::from_secs(120))
+    .build()?;
+let resp = vision_client.post(&url).send().await?;
+
+// ❌ 错误：复用普通客户端（30 秒超时）
+let resp = self.client.post(&url).send().await?;  // 3 张图会超时
+```
+
+---
+
+## 三十六、附件 FileID 去重铁律（来自 v0.7.0 测试）
+
+- **从 HTML 提取 fileID 时必须去重**
+- **根因**：禅道 HTML 中同一图片出现 2 次（`src` 属性和 `alt` 属性各一次）
+- **不去重会导致**：同一图片下载 2 次、vision 分析 2 次，浪费 API 配额和时间
+- **教训**: Bug #666 提取到 6 个 fileID（实际只有 3 张图）
+
+### 正确实现
+
+```rust
+// ✅ 正确：去重
+if !file_ids.contains(&fid) {
+    file_ids.push(fid);
+}
+
+// ❌ 错误：不去重
+file_ids.push(fid);  // 同一图片出现 2 次
+```
+
+---
+
+## 三十七、Executor 启动清理残留锁铁律（来自 v0.7.0 测试）
+
+- **Executor 启动时必须清理本 agent 的所有 `fix_active:{agent}:*` 残留锁**
+- **根因**：进程崩溃或被 kill 后，fix_active 锁（TTL 30 分钟）残留，阻止 Bug 重新入队
+- **清理方式**：`SCAN fix_active:{agent}:* → DEL` 每个匹配的 key
+- **教训**: v0.7.0 重启 executor 后 Bug #666 被残留锁阻止 30 分钟
+
+### 正确实现
+
+```rust
+// ✅ 正确：启动时 SCAN 清理
+let pattern = format!("fix_active:{}:*", self.agent_id);
+let mut cursor: u64 = 0;
+loop {
+    let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+        .arg(cursor).arg("MATCH").arg(&pattern).arg("COUNT").arg(100)
+        .query_async(&mut conn).await.unwrap_or((0, vec![]));
+    for key in &keys {
+        let _: RedisResult<()> = conn.del(key).await;
+    }
+    cursor = new_cursor;
+    if cursor == 0 { break; }
+}
+```
+
+---
+
+## 三十八、Verdict UNKNOWN 降级判定铁律（来自 v0.7.0 测试）
+
+- **Harness Loop 的 verdict 为 UNKNOWN 时，不能直接判失败**
+- **必须检查实际代码变更**（`count_changed_files`）
+- **有变更 → 降级为编译验证**（`mvn compile` / `vue-tsc`）
+- **无变更 → 判失败**
+- **教训**: v0.7.0 测试中 codex 修复正确但 verdict 解析失败（UNKNOWN），直接判 success=false
+
+### 正确流程
+
+```
+verdict == UNKNOWN
+  ├─ changes > 0 → mvn compile → PASS → 继续后续阶段
+  ├─ changes > 0 → mvn compile → FAIL → 返回失败
+  └─ changes == 0 → 返回失败
+```
+
+---
+
+## 三十九、Pipeline 结果必须清理旧数据铁律（来自 v0.7.0 测试）
+
+- **重新提交 Bug 修复前，必须删除 `pipeline:result:{bug_id}` 旧数据**
+- **根因**：Redis 中残留旧结果，新结果写入前读到的是旧数据，导致误判
+- **教训**: v0.7.0 测试中 Bug #666/#668/#671 读到的是上一轮的失败结果
+
+### 正确实现
+
+```rust
+// ✅ 正确：提交前清理旧结果
+let result_key = format!("pipeline:result:{}", bug_id);
+let _: RedisResult<()> = conn.del(&result_key).await;
+// 然后入队
+conn.rpush(&queue, task.to_string()).await;
+```

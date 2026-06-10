@@ -1,6 +1,6 @@
 ---
 name: agentforge-harness
-description: AgentForge Harness Engineering 完整技能包 — 18条铁律 + 8智能体Bug修复框架 + 全链路验证方法论。安装后自动加载所有约束规则。
+description: AgentForge Harness Engineering 完整技能包 — 39条铁律 + 8智能体Bug修复框架 + 全链路验证方法论。安装后自动加载所有约束规则。
 when_to_use: 修复Bug、代码审查、开发新功能、任何需要遵循Harness Engineering方法论的任务
 ---
 
@@ -12,7 +12,7 @@ when_to_use: 修复Bug、代码审查、开发新功能、任何需要遵循Harn
 
 | 组件 | 路径 | 说明 |
 |---|---|---|
-| 铁律 | `rules/IRON_LAWS.md` | 18条不可违反规则 |
+| 铁律 | `rules/IRON_LAWS.md` | 39条不可违反规则 |
 | 修复技能 | `skills/agentforge-fix/` | 全链路Bug修复流程 |
 | 分析技能 | `skills/agentforge-analyze/` | 根因分析 |
 | 测试技能 | `skills/agentforge-test/` | Playwright回归测试 |
@@ -54,7 +54,7 @@ ls ~/.codex/rules/IRON_LAWS.md
 ls ~/.codex/skills/agentforge-*/
 ```
 
-## 铁律摘要（18条）
+## 铁律摘要（39条）
 
 1. Bug状态管理 — 已关闭不处理，人类Bug只加备注
 2. 修复流程 — 一次一个Bug，修前读AGENTS.md
