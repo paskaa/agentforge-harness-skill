@@ -545,3 +545,218 @@ let _: RedisResult<()> = conn.del(&result_key).await;
 // 然后入队
 conn.rpush(&queue, task.to_string()).await;
 ```
+
+---
+
+## 四十、慢模型 Stall 超时必须 ≥1200s 铁律（来自 v0.8.0 测试）
+
+- **codex exec 停滞检测超时必须 ≥1200 秒（20 分钟）**
+- **根因**：mimo-v2.5 推理慢，reviewer/QA 阶段经常 600s 内无输出但实际在处理
+- **600s 超时会误杀正常运行的 codex 进程**，导致 Generator 已完成的代码变更被丢弃
+- **教训**: v0.8.0 测试中 #666/#668/#671/#707/#708/#719 全部因 600s stall 超时失败
+- **超时后必须自动重试**（最多 3 次），stall 通常是暂时性 API 延迟
+
+### 正确配置
+
+```rust
+// ✅ 正确：1200 秒
+let stall_timeout = std::time::Duration::from_secs(1200);
+
+// ❌ 错误：600 秒（mimo-v2.5 会误杀）
+let stall_timeout = std::time::Duration::from_secs(600);
+```
+
+---
+
+## 四十一、编译模块名必须匹配项目结构铁律（来自 v0.8.0 测试）
+
+- **Maven 编译命令中的模块名必须与实际 pom.xml 中的 module name 一致**
+- **当前项目模块名**：`healthlink-his-application`（不是 `openhis-application`）
+- **所有涉及 `mvn compile/test/package -pl` 的命令都必须用正确模块名**
+- **教训**: v0.8.0 测试中 verification.rs 使用 `openhis-application` 导致 `Could not find the selected project in the reactor` 编译失败
+
+### 检查清单
+
+```bash
+# 验证模块名
+cd healthlink-his-server && mvn help:effective-pom | grep "<module>"
+# 正确: healthlink-his-application
+# 错误: openhis-application
+```
+
+---
+
+## 四十二、Worktree 必须在正确的 Agent 分支上铁律（来自 v0.8.0 测试）
+
+- **codex exec 启动前必须确保 worktree 在 `{agent_name}` 分支上**
+- **必须先 `git checkout {agent_name}` 再 `git pull --rebase origin {agent_name}`**
+- **如果 checkout 失败（分支不存在），必须 `git checkout -b {agent_name} origin/{agent_name}`**
+- **根因**：之前的修复遗留临时分支（如 `fix-668-temp`），worktree 停在错误分支上
+- **教训**: v0.8.0 测试中 guanyu worktree 停在 `fix-668-temp`，#735 的变更提交到了错误分支
+
+### 正确实现
+
+```rust
+// ✅ 正确：先 checkout 再 pull
+let _ = Command::new("git")
+    .args(["-C", &worktree, "stash", "--include-untracked"])
+    .output();
+let _ = Command::new("git")
+    .args(["-C", &worktree, "checkout", agent_branch])  // 先切分支
+    .output();
+let _ = Command::new("git")
+    .args(["-C", &worktree, "pull", "--rebase", "origin", agent_branch])
+    .output();
+
+// ❌ 错误：直接 pull（可能在错误分支上）
+let _ = Command::new("git")
+    .args(["-C", &worktree, "pull", "--rebase", "origin", agent_branch])
+    .output();
+```
+
+---
+
+## 四十三、验证必须回退检查 Agent 分支铁律（来自 v0.8.0 测试）
+
+- **验证时如果 develop 上找不到修复 commit，必须回退检查各 agent 分支**
+- **cherry-pick 到 develop 可能失败**（冲突、分支不存在等），但代码仍在 agent 分支上
+- **找到 commit 后必须再次尝试 cherry-pick 到 develop**
+- **教训**: v0.8.0 测试中 #666 的 commit 在 guanyu 分支上但未合入 develop，验证误判为失败
+
+### 正确流程
+
+```
+验证 Bug #X:
+  1. git log origin/develop --grep="Bug#X"  → 找到？用 develop 验证
+  2. git log origin/{agent} --grep="#X"      → 找到？cherry-pick 到 develop 再验证
+  3. 都没找到？判定失败
+```
+
+---
+
+## 四十四、验证编译必须在正确目录铁律（来自 v0.8.0 测试）
+
+- **后端编译必须在 `healthlink-his-server/` 子目录下执行 `mvn compile`**
+- **前端编译必须在 `healthlink-his-ui/` 子目录下执行 `npx vite build`**
+- **禁止在 `his-repo/` 根目录执行编译**（没有 pom.xml 会报错）
+- **JAVA_HOME 必须指向 Java 25**：`/opt/jdk-25/`
+
+### 正确路径
+
+```bash
+# 后端
+cd /root/.openclaw/workspace/his-repo/healthlink-his-server
+export JAVA_HOME=/opt/jdk-25
+mvn compile -pl healthlink-his-application -am -q
+
+# 前端
+cd /root/.openclaw/workspace/his-repo/healthlink-his-ui
+npx vite build --mode dev
+```
+
+---
+
+## 四十五、编译后必须部署到 systemd 路径铁律（来自 v0.8.0 教训）
+
+- **`cargo build --release` 不会自动更新 systemd 使用的二进制**
+- **systemd 服务使用的路径是 `/usr/local/bin/agentforge`**，不是 `target/release/agentforge`
+- **部署流程**：`systemctl stop` → `cp target/release/agentforge /usr/local/bin/agentforge` → `systemctl start`
+- **教训**: v0.8.0 修改了 stall 超时/模块名/worktree 分支逻辑，但 30 分钟内全部没生效，因为跑的还是旧二进制
+
+### 正确部署流程
+
+```bash
+# ✅ 正确：stop → cp → start
+cd /root/agentforge-rs
+systemctl stop 'agentforge-rust@{guanyu,zhaoyun,xunyu,zhangfei,huatuo,chenlin,zhugeliang}'
+cargo build --release
+cp target/release/agentforge /usr/local/bin/agentforge
+systemctl start 'agentforge-rust@{guanyu,zhaoyun,xunyu,zhangfei,huatuo,chenlin,zhugeliang}'
+
+# ❌ 错误：只 cargo build 不 cp
+cargo build --release
+systemctl restart ...  # 还是旧二进制！
+```
+
+---
+
+## 四十六、Cherry-pick 冲突必须逐个解决铁律（来自 v0.8.0 教训）
+
+- **cherry-pick 失败会阻塞后续所有 cherry-pick**（git index 处于 unmerged 状态）
+- **根因**：多个 worktree commit 修改了同一文件的不同部分，第一个冲突导致后续全部失败
+- **解决方法**：
+  1. 逐个 cherry-pick，失败时用 `--ours` 解决冲突（保留 develop 版本）
+  2. 对于已在 develop 上有修复的文件，用 develop 版本
+  3. 对于真正的新改动，用 `--theirs` 或手动合并
+- **铁律**: cherry-pick 必须逐个执行并检查，失败时立即解决冲突再继续
+
+### 正确流程
+
+```bash
+# ✅ 正确：逐个 cherry-pick，失败立即解决
+for hash in $commits; do
+  git cherry-pick $hash
+  if [ $? -ne 0 ]; then
+    # 查看冲突文件，选择 ours/theirs
+    git checkout --ours <conflict_file>
+    git add <conflict_file>
+    git cherry-pick --continue
+  fi
+done
+
+# ❌ 错误：批量 cherry-pick 失败后不处理
+git cherry-pick $hash1 $hash2 $hash3  # 一个失败全部卡住
+```
+
+---
+
+## 四十七、Cherry-pick 前必须检查冲突铁律（来自 v0.8.0 教训）
+
+- **cherry-pick 前先检查目标 commit 与 develop 的差异**
+- 如果差异集中在已被 develop 修改过的文件，预判会冲突
+- 对于纯新增文件的 commit，cherry-pick 通常不会冲突
+- **教训**: #735 改了 PatientManageMapper.xml，与 develop 上 #717 的修改冲突，阻塞了 #665/#697/#707/#666 共 4 个 commit 的合入
+
+### 检查命令
+
+```bash
+# 查看 commit 与 develop 的差异文件
+git diff develop...<commit> --name-only
+
+# 检查这些文件在 develop 上是否有新改动
+for f in $(git diff develop...<commit> --name-only); do
+  git log --oneline -1 develop -- "$f"
+done
+```
+
+---
+
+## 四十八、Stall 后代码已修改则降级通过铁律（来自 v0.8.0 教训）
+
+- **codex stall 不等于修复失败** — mimo-v2.5 经常改完代码后卡在输出 VERDICT 阶段
+- **stall 后必须检查 worktree 变更**：
+  1. 有变更 → 尝试编译验证（mvn compile / vite build）
+  2. 编译通过 → degraded PASS，继续后续阶段
+  3. 编译失败 → FAIL
+  4. 无变更 → FAIL
+- **教训**: #669（7 文件 79 行插入）、#668（1 文件 4 处修改）代码已改好但因 stall 被判 FAIL
+
+### 正确流程
+
+```
+codex stall 480s
+  ├─ 检查 worktree: count_changed_files()
+  ├─ changes > 0:
+  │    ├─ 编译通过 → degraded PASS → 继续 reviewer/QA
+  │    └─ 编译失败 → FAIL
+  └─ changes == 0 → FAIL
+```
+
+---
+
+## 四十九、主动唤醒重试必须传递上下文铁律（来自 v0.8.0 教训）
+
+- **stall 重试不能发相同的 prompt** — 模型会从头开始，浪费已做的工作
+- **必须传递上次的部分输出**（最后 1500 字节）作为上下文
+- **prompt 中明确说明"从上次中断处继续"**
+- **教训**: 不带上下文重试时，模型重复分析已分析过的代码，再次 stall
