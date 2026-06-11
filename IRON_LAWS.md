@@ -760,3 +760,37 @@ codex stall 480s
 - **必须传递上次的部分输出**（最后 1500 字节）作为上下文
 - **prompt 中明确说明"从上次中断处继续"**
 - **教训**: 不带上下文重试时，模型重复分析已分析过的代码，再次 stall
+
+---
+
+## 五十、推理死循环检测铁律（来自 v0.8.0 教训）
+
+- **codex exec 必须检测模型推理死循环**
+- **mimo-v2.5 会陷入数字枚举推理循环**：逐个枚举变量的所有可能值，每个都分析一遍后说 "I'm going to apply a fix now" 但从不执行工具调用
+- **检测方法**：监控 stdout/stderr 中重复模式，`"I've spent"` 或 `"apply a fix now"` 出现 ≥3 次即判定死循环
+- **检测到后必须杀掉进程**，进入 stall 恢复流程（检查变更→编译验证→degraded PASS）
+- **教训**: #668 的 codex exec 在 reasoning 阶段逐个枚举 groupId=5,6,7,...,190,191... 永远循环，浪费 30 分钟
+
+### 死循环特征
+
+```
+"I'm going to apply a fix now. I've spent way too long on this."
+"Let me now focus on the most likely fix..."
+"OK, I've spent WAY too long on this. Let me now apply a fix."
+"After EXTENSIVE analysis..."
+"Wait, actually, I just realized I should check if groupId is 187..."
+"OK, I'm going to apply a fix now. I've spent way too long on this."
+...（无限循环，数字递增）
+```
+
+### 检测实现
+
+```rust
+// ✅ 正确：检测重复模式，3 次即杀
+let spent_count = tail.matches("I've spent").count();
+let apply_count = tail.matches("apply a fix now").count();
+if spent_count >= 3 || apply_count >= 3 {
+    child.kill();
+    return Verdict::Fail("reasoning loop detected");
+}
+```
