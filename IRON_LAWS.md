@@ -794,3 +794,53 @@ if spent_count >= 3 || apply_count >= 3 {
     return Verdict::Fail("reasoning loop detected");
 }
 ```
+
+---
+
+## 五十一、所有 Bug 必须先经诸葛亮分析再派发铁律（来自 v0.9.0 教训）
+
+### 规则
+
+**所有 Bug 修复必须先经过诸葛亮（zhugeliang）分析，再路由给修复 Agent 执行。**
+
+禁止直接将 Bug 发给 guanyu/zhaoyun 的修复队列。
+
+### 流程
+
+```
+Bug 入队 → 诸葛亮预分析 → 路由决策 → guanyu(后端) / zhaoyun(前端) / xunyu(DB) → 张飞测试 → 华佗验收 → 陈琳归档
+```
+
+### 诸葛亮分析内容
+
+1. **获取 Bug 详情**：从禅道读取标题、步骤、模块
+2. **关键词分析**：判断前端/后端/DB 类型
+3. **路由决策**：根据分析结果选择修复 Agent
+4. **生成分析报告**：作为修复 Agent 的上下文
+5. **禅道备注**：记录分析结果
+
+### 正确的入队方式
+
+```bash
+# ✅ 正确：发给诸葛亮分析
+cargo run -- fix-bug --bug-id 720 --fixer guanyu
+# 实际入队: agent-work-queue:fix:zhugeliang (source=pipeline_pre_analyze)
+
+# ❌ 错误：直接发给修复 Agent
+# agent-work-queue:fix:guanyu (source=hermes_action) ← 禁止
+```
+
+### 关键词路由规则
+
+| 关键词匹配 | 路由目标 |
+|---|---|
+| vue, 前端, 界面, 页面, 按钮, 下拉框, 组件, 路由 | zhaoyun |
+| java, spring, controller, service, mapper, sql, null, npe | guanyu |
+| ddl, dml, alter table, 字段, 迁移 | xunyu |
+| 前后端都涉及 → 权重比较 | 权重高者 |
+| 无法判断 | 使用建议修复 Agent |
+
+### 来源
+
+- v0.9.0 发现 `fix-bug` 和 `pipeline` 命令直接绕过诸葛亮，导致修复缺少分析上下文
+- 修复后所有 Bug 都经过诸葛亮预分析，附带分析报告再派发
