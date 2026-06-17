@@ -4,7 +4,7 @@
 
 ## 铁律
 
-🔴 完整铁律文件: `~/.codex/rules/IRON_LAWS.md`（18条，运行时自动加载）
+🔴 完整铁律文件: `~/.codex/rules/IRON_LAWS.md`（51条，运行时自动加载）
 
 ## 技能索引
 
