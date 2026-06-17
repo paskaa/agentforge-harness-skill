@@ -169,11 +169,16 @@ rg "状态枚举名|相关方法名|相关字段名" --type java --type vue
 
 ---
 
-## 十六、禅道交互
+## 十六、禅道交互（铁律 — 不可违反）
 
-- 备注使用 resolve+activate workaround
-- 不直接调用 comment API（会 404）
-- 图片附件必须 OCR 读取
+- **备注必须使用 resolve+activate workaround**
+  - `zentao bug update --comment` ❌ 不会创建 comment action
+  - `zentao bug update --data '{"comment":"..."}'` ❌ 同样无效
+  - ✅ 正确方法：`zentao bug resolve --id <id> --data '{"resolution":"fixed","resolvedBuild":"trunk","comment":"..."}'`
+  - ✅ 然后激活：`zentao bug activate --id <id> --data '{"openedBuild":"trunk"}'`
+- **不直接调用 comment API（会 404）**
+- **图片附件必须 OCR 读取**
+- **每个 Bug 修复必须同时写禅道备注 — 代码提交和备注是原子操作，缺一不可**
 
 ---
 
@@ -375,3 +380,467 @@ for id in 711 710 709; do
 done
 ```
 
+
+## 三十一、修复后必须写禅道备注铁律（来自 v0.6.0 修复）— 不可违反
+
+- **每个 Bug 修复（commit + cherry-pick 到 develop）后，必须立即写禅道备注**
+- **禁止只提交代码不写备注 — 代码提交和禅道备注是原子操作，缺一不可**
+- **正确方法（铁律 #16）**：
+  - `zentao bug resolve --id <id> --data '{"resolution":"fixed","resolvedBuild":"trunk","comment":"..."}'`
+  - `zentao bug activate --id <id> --data '{"openedBuild":"trunk"}'`
+- 成功修复：调用 `resolve_bug_in_zentao` 写结构化备注（根因 + 变更文件 + 验证结果）
+- 修复失败：调用 `comment_in_zentao` 写失败原因备注
+- **代码路径**：`run_harness_loop` 的自动提交逻辑必须包含禅道备注调用
+- **验证方式**：`curl /api.php/v1/bugs/{id}` 检查 `actions` 字段是否有新 comment
+- **教训**: v0.6.0 发现 `run_harness_loop` 路径缺少禅道备注调用；v0.6.1 发现 `zentao bug update --comment` 不创建 comment action，必须用 resolve+activate
+
+## 三十二、DTO 字段类型防御铁律（来自 Bug #632）
+
+- **前端传入的 Boolean 字段 → 改用 String + 业务层转换**
+  - Jackson 对 Boolean 严格校验，只接受 `true/false`，非标输入直接崩
+  - 前端数据来源多（搜索、分类、详情回填），结构不一致是常态
+- **所有接受前端输入的 DTO 加 `@JsonIgnoreProperties(ignoreUnknown = true)`**
+  - 防止前端额外字段导致反序列化失败
+- **Integer/Long 字段同理** — 前端可能传空字符串，DTO 用 String 接更安全
+- **调试反序列化错误第一步**：直接搜 DTO 里的目标类型字段（如 Boolean），不用逐行读代码
+- **教训**: Bug #632 因 `isPackage: Boolean` 接收到项目名称 "肝功能12项" 崩溃，排查耗时 30min+
+
+## 三十三、Codex Exec 停滞检测铁律（来自 v0.7.0 测试）
+
+- **codex exec 必须有停滞检测机制** — 进程无输出超过 10 分钟必须杀掉
+- **检测范围必须包含 stdout 和 stderr** — codex reasoning 阶段只写 stderr 不写 stdout
+- **停滞判定基于最后活动时间**（stdout 或 stderr 最后写入时间），不是进程存活时间
+- **停滞杀掉后必须自动重试**（最多 3 次），因为 stall 通常是暂时性问题
+- **教训**: v0.7.0 测试中 codex exec 无输出跑 16 分钟才发现，浪费资源
+
+### 正确实现
+
+```rust
+// ✅ 正确：stdout + stderr 都追踪活动
+let last_activity = Arc::new(Mutex::new(Instant::now()));
+// stdout 线程：写入时更新 last_activity
+// stderr 线程：写入时也更新 last_activity
+// 主循环：检查 last_activity.elapsed() > stall_timeout
+
+// ❌ 错误：只追踪 stdout
+// reasoning 阶段只有 stderr 输出，会被误判为 stall
+```
+
+---
+
+## 三十四、远程插件同步禁用铁律（来自 v0.7.0 测试）
+
+- **codex exec 启动时必须禁用远程插件同步**
+- **根因**：`codex_core_plugins::remote::remote_installed_plugin_sync` 尝试连接 `chatgpt.com` 认证，API key 模式下认证失败后 hang 住
+- **解决方案**：
+  1. 移除或修复 `~/.agents/plugins/marketplace.json`（格式必须是 JSON 数组）
+  2. 设置环境变量 `CODEX_DISABLE_REMOTE_SYNC=1`
+- **验证**：启动日志不应出现 `remote installed plugin bundle sync failed`
+- **教训**: v0.7.0 测试中 3 次 stall 重试全部卡在插件同步，每次 10 分钟
+
+---
+
+## 三十五、Vision API 超时配置铁律（来自 v0.7.0 测试）
+
+- **多图 Vision 请求必须设置 120 秒以上超时**
+- **单图 Vision 请求至少 30 秒**
+- **Vision 客户端必须与普通 LLM 客户端分开**（不同超时配置）
+- **Vision 失败必须回退到纯文本分析**，不能阻断修复流程
+- **教训**: v0.7.0 测试中 3 张图 vision 请求 30 秒超时失败
+
+### 正确实现
+
+```rust
+// ✅ 正确：Vision 用独立客户端，120 秒超时
+let vision_client = Client::builder()
+    .timeout(Duration::from_secs(120))
+    .build()?;
+let resp = vision_client.post(&url).send().await?;
+
+// ❌ 错误：复用普通客户端（30 秒超时）
+let resp = self.client.post(&url).send().await?;  // 3 张图会超时
+```
+
+---
+
+## 三十六、附件 FileID 去重铁律（来自 v0.7.0 测试）
+
+- **从 HTML 提取 fileID 时必须去重**
+- **根因**：禅道 HTML 中同一图片出现 2 次（`src` 属性和 `alt` 属性各一次）
+- **不去重会导致**：同一图片下载 2 次、vision 分析 2 次，浪费 API 配额和时间
+- **教训**: Bug #666 提取到 6 个 fileID（实际只有 3 张图）
+
+### 正确实现
+
+```rust
+// ✅ 正确：去重
+if !file_ids.contains(&fid) {
+    file_ids.push(fid);
+}
+
+// ❌ 错误：不去重
+file_ids.push(fid);  // 同一图片出现 2 次
+```
+
+---
+
+## 三十七、Executor 启动清理残留锁铁律（来自 v0.7.0 测试）
+
+- **Executor 启动时必须清理本 agent 的所有 `fix_active:{agent}:*` 残留锁**
+- **根因**：进程崩溃或被 kill 后，fix_active 锁（TTL 30 分钟）残留，阻止 Bug 重新入队
+- **清理方式**：`SCAN fix_active:{agent}:* → DEL` 每个匹配的 key
+- **教训**: v0.7.0 重启 executor 后 Bug #666 被残留锁阻止 30 分钟
+
+### 正确实现
+
+```rust
+// ✅ 正确：启动时 SCAN 清理
+let pattern = format!("fix_active:{}:*", self.agent_id);
+let mut cursor: u64 = 0;
+loop {
+    let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+        .arg(cursor).arg("MATCH").arg(&pattern).arg("COUNT").arg(100)
+        .query_async(&mut conn).await.unwrap_or((0, vec![]));
+    for key in &keys {
+        let _: RedisResult<()> = conn.del(key).await;
+    }
+    cursor = new_cursor;
+    if cursor == 0 { break; }
+}
+```
+
+---
+
+## 三十八、Verdict UNKNOWN 降级判定铁律（来自 v0.7.0 测试）
+
+- **Harness Loop 的 verdict 为 UNKNOWN 时，不能直接判失败**
+- **必须检查实际代码变更**（`count_changed_files`）
+- **有变更 → 降级为编译验证**（`mvn compile` / `vue-tsc`）
+- **无变更 → 判失败**
+- **教训**: v0.7.0 测试中 codex 修复正确但 verdict 解析失败（UNKNOWN），直接判 success=false
+
+### 正确流程
+
+```
+verdict == UNKNOWN
+  ├─ changes > 0 → mvn compile → PASS → 继续后续阶段
+  ├─ changes > 0 → mvn compile → FAIL → 返回失败
+  └─ changes == 0 → 返回失败
+```
+
+---
+
+## 三十九、Pipeline 结果必须清理旧数据铁律（来自 v0.7.0 测试）
+
+- **重新提交 Bug 修复前，必须删除 `pipeline:result:{bug_id}` 旧数据**
+- **根因**：Redis 中残留旧结果，新结果写入前读到的是旧数据，导致误判
+- **教训**: v0.7.0 测试中 Bug #666/#668/#671 读到的是上一轮的失败结果
+
+### 正确实现
+
+```rust
+// ✅ 正确：提交前清理旧结果
+let result_key = format!("pipeline:result:{}", bug_id);
+let _: RedisResult<()> = conn.del(&result_key).await;
+// 然后入队
+conn.rpush(&queue, task.to_string()).await;
+```
+
+---
+
+## 四十、慢模型 Stall 超时必须 ≥1200s 铁律（来自 v0.8.0 测试）
+
+- **codex exec 停滞检测超时必须 ≥1200 秒（20 分钟）**
+- **根因**：mimo-v2.5 推理慢，reviewer/QA 阶段经常 600s 内无输出但实际在处理
+- **600s 超时会误杀正常运行的 codex 进程**，导致 Generator 已完成的代码变更被丢弃
+- **教训**: v0.8.0 测试中 #666/#668/#671/#707/#708/#719 全部因 600s stall 超时失败
+- **超时后必须自动重试**（最多 3 次），stall 通常是暂时性 API 延迟
+
+### 正确配置
+
+```rust
+// ✅ 正确：1200 秒
+let stall_timeout = std::time::Duration::from_secs(1200);
+
+// ❌ 错误：600 秒（mimo-v2.5 会误杀）
+let stall_timeout = std::time::Duration::from_secs(600);
+```
+
+---
+
+## 四十一、编译模块名必须匹配项目结构铁律（来自 v0.8.0 测试）
+
+- **Maven 编译命令中的模块名必须与实际 pom.xml 中的 module name 一致**
+- **当前项目模块名**：`healthlink-his-application`（不是 `openhis-application`）
+- **所有涉及 `mvn compile/test/package -pl` 的命令都必须用正确模块名**
+- **教训**: v0.8.0 测试中 verification.rs 使用 `openhis-application` 导致 `Could not find the selected project in the reactor` 编译失败
+
+### 检查清单
+
+```bash
+# 验证模块名
+cd healthlink-his-server && mvn help:effective-pom | grep "<module>"
+# 正确: healthlink-his-application
+# 错误: openhis-application
+```
+
+---
+
+## 四十二、Worktree 必须在正确的 Agent 分支上铁律（来自 v0.8.0 测试）
+
+- **codex exec 启动前必须确保 worktree 在 `{agent_name}` 分支上**
+- **必须先 `git checkout {agent_name}` 再 `git pull --rebase origin {agent_name}`**
+- **如果 checkout 失败（分支不存在），必须 `git checkout -b {agent_name} origin/{agent_name}`**
+- **根因**：之前的修复遗留临时分支（如 `fix-668-temp`），worktree 停在错误分支上
+- **教训**: v0.8.0 测试中 guanyu worktree 停在 `fix-668-temp`，#735 的变更提交到了错误分支
+
+### 正确实现
+
+```rust
+// ✅ 正确：先 checkout 再 pull
+let _ = Command::new("git")
+    .args(["-C", &worktree, "stash", "--include-untracked"])
+    .output();
+let _ = Command::new("git")
+    .args(["-C", &worktree, "checkout", agent_branch])  // 先切分支
+    .output();
+let _ = Command::new("git")
+    .args(["-C", &worktree, "pull", "--rebase", "origin", agent_branch])
+    .output();
+
+// ❌ 错误：直接 pull（可能在错误分支上）
+let _ = Command::new("git")
+    .args(["-C", &worktree, "pull", "--rebase", "origin", agent_branch])
+    .output();
+```
+
+---
+
+## 四十三、验证必须回退检查 Agent 分支铁律（来自 v0.8.0 测试）
+
+- **验证时如果 develop 上找不到修复 commit，必须回退检查各 agent 分支**
+- **cherry-pick 到 develop 可能失败**（冲突、分支不存在等），但代码仍在 agent 分支上
+- **找到 commit 后必须再次尝试 cherry-pick 到 develop**
+- **教训**: v0.8.0 测试中 #666 的 commit 在 guanyu 分支上但未合入 develop，验证误判为失败
+
+### 正确流程
+
+```
+验证 Bug #X:
+  1. git log origin/develop --grep="Bug#X"  → 找到？用 develop 验证
+  2. git log origin/{agent} --grep="#X"      → 找到？cherry-pick 到 develop 再验证
+  3. 都没找到？判定失败
+```
+
+---
+
+## 四十四、验证编译必须在正确目录铁律（来自 v0.8.0 测试）
+
+- **后端编译必须在 `healthlink-his-server/` 子目录下执行 `mvn compile`**
+- **前端编译必须在 `healthlink-his-ui/` 子目录下执行 `npx vite build`**
+- **禁止在 `his-repo/` 根目录执行编译**（没有 pom.xml 会报错）
+- **JAVA_HOME 必须指向 Java 25**：`/opt/jdk-25/`
+
+### 正确路径
+
+```bash
+# 后端
+cd /root/.openclaw/workspace/his-repo/healthlink-his-server
+export JAVA_HOME=/opt/jdk-25
+mvn compile -pl healthlink-his-application -am -q
+
+# 前端
+cd /root/.openclaw/workspace/his-repo/healthlink-his-ui
+npx vite build --mode dev
+```
+
+---
+
+## 四十五、编译后必须部署到 systemd 路径铁律（来自 v0.8.0 教训）
+
+- **`cargo build --release` 不会自动更新 systemd 使用的二进制**
+- **systemd 服务使用的路径是 `/usr/local/bin/agentforge`**，不是 `target/release/agentforge`
+- **部署流程**：`systemctl stop` → `cp target/release/agentforge /usr/local/bin/agentforge` → `systemctl start`
+- **教训**: v0.8.0 修改了 stall 超时/模块名/worktree 分支逻辑，但 30 分钟内全部没生效，因为跑的还是旧二进制
+
+### 正确部署流程
+
+```bash
+# ✅ 正确：stop → cp → start
+cd /root/agentforge-rs
+systemctl stop 'agentforge-rust@{guanyu,zhaoyun,xunyu,zhangfei,huatuo,chenlin,zhugeliang}'
+cargo build --release
+cp target/release/agentforge /usr/local/bin/agentforge
+systemctl start 'agentforge-rust@{guanyu,zhaoyun,xunyu,zhangfei,huatuo,chenlin,zhugeliang}'
+
+# ❌ 错误：只 cargo build 不 cp
+cargo build --release
+systemctl restart ...  # 还是旧二进制！
+```
+
+---
+
+## 四十六、Cherry-pick 冲突必须逐个解决铁律（来自 v0.8.0 教训）
+
+- **cherry-pick 失败会阻塞后续所有 cherry-pick**（git index 处于 unmerged 状态）
+- **根因**：多个 worktree commit 修改了同一文件的不同部分，第一个冲突导致后续全部失败
+- **解决方法**：
+  1. 逐个 cherry-pick，失败时用 `--ours` 解决冲突（保留 develop 版本）
+  2. 对于已在 develop 上有修复的文件，用 develop 版本
+  3. 对于真正的新改动，用 `--theirs` 或手动合并
+- **铁律**: cherry-pick 必须逐个执行并检查，失败时立即解决冲突再继续
+
+### 正确流程
+
+```bash
+# ✅ 正确：逐个 cherry-pick，失败立即解决
+for hash in $commits; do
+  git cherry-pick $hash
+  if [ $? -ne 0 ]; then
+    # 查看冲突文件，选择 ours/theirs
+    git checkout --ours <conflict_file>
+    git add <conflict_file>
+    git cherry-pick --continue
+  fi
+done
+
+# ❌ 错误：批量 cherry-pick 失败后不处理
+git cherry-pick $hash1 $hash2 $hash3  # 一个失败全部卡住
+```
+
+---
+
+## 四十七、Cherry-pick 前必须检查冲突铁律（来自 v0.8.0 教训）
+
+- **cherry-pick 前先检查目标 commit 与 develop 的差异**
+- 如果差异集中在已被 develop 修改过的文件，预判会冲突
+- 对于纯新增文件的 commit，cherry-pick 通常不会冲突
+- **教训**: #735 改了 PatientManageMapper.xml，与 develop 上 #717 的修改冲突，阻塞了 #665/#697/#707/#666 共 4 个 commit 的合入
+
+### 检查命令
+
+```bash
+# 查看 commit 与 develop 的差异文件
+git diff develop...<commit> --name-only
+
+# 检查这些文件在 develop 上是否有新改动
+for f in $(git diff develop...<commit> --name-only); do
+  git log --oneline -1 develop -- "$f"
+done
+```
+
+---
+
+## 四十八、Stall 后代码已修改则降级通过铁律（来自 v0.8.0 教训）
+
+- **codex stall 不等于修复失败** — mimo-v2.5 经常改完代码后卡在输出 VERDICT 阶段
+- **stall 后必须检查 worktree 变更**：
+  1. 有变更 → 尝试编译验证（mvn compile / vite build）
+  2. 编译通过 → degraded PASS，继续后续阶段
+  3. 编译失败 → FAIL
+  4. 无变更 → FAIL
+- **教训**: #669（7 文件 79 行插入）、#668（1 文件 4 处修改）代码已改好但因 stall 被判 FAIL
+
+### 正确流程
+
+```
+codex stall 480s
+  ├─ 检查 worktree: count_changed_files()
+  ├─ changes > 0:
+  │    ├─ 编译通过 → degraded PASS → 继续 reviewer/QA
+  │    └─ 编译失败 → FAIL
+  └─ changes == 0 → FAIL
+```
+
+---
+
+## 四十九、主动唤醒重试必须传递上下文铁律（来自 v0.8.0 教训）
+
+- **stall 重试不能发相同的 prompt** — 模型会从头开始，浪费已做的工作
+- **必须传递上次的部分输出**（最后 1500 字节）作为上下文
+- **prompt 中明确说明"从上次中断处继续"**
+- **教训**: 不带上下文重试时，模型重复分析已分析过的代码，再次 stall
+
+---
+
+## 五十、推理死循环检测铁律（来自 v0.8.0 教训）
+
+- **codex exec 必须检测模型推理死循环**
+- **mimo-v2.5 会陷入数字枚举推理循环**：逐个枚举变量的所有可能值，每个都分析一遍后说 "I'm going to apply a fix now" 但从不执行工具调用
+- **检测方法**：监控 stdout/stderr 中重复模式，`"I've spent"` 或 `"apply a fix now"` 出现 ≥3 次即判定死循环
+- **检测到后必须杀掉进程**，进入 stall 恢复流程（检查变更→编译验证→degraded PASS）
+- **教训**: #668 的 codex exec 在 reasoning 阶段逐个枚举 groupId=5,6,7,...,190,191... 永远循环，浪费 30 分钟
+
+### 死循环特征
+
+```
+"I'm going to apply a fix now. I've spent way too long on this."
+"Let me now focus on the most likely fix..."
+"OK, I've spent WAY too long on this. Let me now apply a fix."
+"After EXTENSIVE analysis..."
+"Wait, actually, I just realized I should check if groupId is 187..."
+"OK, I'm going to apply a fix now. I've spent way too long on this."
+...（无限循环，数字递增）
+```
+
+### 检测实现
+
+```rust
+// ✅ 正确：检测重复模式，3 次即杀
+let spent_count = tail.matches("I've spent").count();
+let apply_count = tail.matches("apply a fix now").count();
+if spent_count >= 3 || apply_count >= 3 {
+    child.kill();
+    return Verdict::Fail("reasoning loop detected");
+}
+```
+
+---
+
+## 五十一、所有 Bug 必须先经诸葛亮分析再派发铁律（来自 v0.9.0 教训）
+
+### 规则
+
+**所有 Bug 修复必须先经过诸葛亮（zhugeliang）分析，再路由给修复 Agent 执行。**
+
+禁止直接将 Bug 发给 guanyu/zhaoyun 的修复队列。
+
+### 流程
+
+```
+Bug 入队 → 诸葛亮预分析 → 路由决策 → guanyu(后端) / zhaoyun(前端) / xunyu(DB) → 张飞测试 → 华佗验收 → 陈琳归档
+```
+
+### 诸葛亮分析内容
+
+1. **获取 Bug 详情**：从禅道读取标题、步骤、模块
+2. **关键词分析**：判断前端/后端/DB 类型
+3. **路由决策**：根据分析结果选择修复 Agent
+4. **生成分析报告**：作为修复 Agent 的上下文
+5. **禅道备注**：记录分析结果
+
+### 正确的入队方式
+
+```bash
+# ✅ 正确：发给诸葛亮分析
+cargo run -- fix-bug --bug-id 720 --fixer guanyu
+# 实际入队: agent-work-queue:fix:zhugeliang (source=pipeline_pre_analyze)
+
+# ❌ 错误：直接发给修复 Agent
+# agent-work-queue:fix:guanyu (source=hermes_action) ← 禁止
+```
+
+### 关键词路由规则
+
+| 关键词匹配 | 路由目标 |
+|---|---|
+| vue, 前端, 界面, 页面, 按钮, 下拉框, 组件, 路由 | zhaoyun |
+| java, spring, controller, service, mapper, sql, null, npe | guanyu |
+| ddl, dml, alter table, 字段, 迁移 | xunyu |
+| 前后端都涉及 → 权重比较 | 权重高者 |
+| 无法判断 | 使用建议修复 Agent |
+
+### 来源
+
+- v0.9.0 发现 `fix-bug` 和 `pipeline` 命令直接绕过诸葛亮，导致修复缺少分析上下文
+- 修复后所有 Bug 都经过诸葛亮预分析，附带分析报告再派发
